@@ -98,7 +98,7 @@ ndeltas     = 5805.44/20#1 Movement speedup factor. Every movementTime sats will
 Train       = True      # Global for all scenarios with different number of GTs. if set to false, the model will not train any of them
 explore     = True      # If True, makes random actions eventually, if false only exploitation
 importQVals = False     # imports either QTables or NN from a certain path
-onlinePhase = False     # when set to true, each satellite becomes a different agent. Recommended using this with importQVals=True and explore=False
+onlinePhase = True     # when set to true, each satellite becomes a different agent. Recommended using this with importQVals=True and explore=False
 if onlinePhase:         # Just in case
     explore     = False
     importQVals = True
@@ -111,7 +111,7 @@ w4          = 5         # Normalization for the distance reward, for the travele
 
 gamma       = 0.99       # greedy factor. Smaller -> Greedy. Optimized params: 0.6 for Q-Learning, 0.99 for Deep Q-Learning
 
-GTs = [8]               # number of gateways to be tested
+GTs = [2]               # number of gateways to be tested
 # Gateways are taken from https://www.ksat.no/ground-network-services/the-ksat-global-ground-station-network/ (Except for Malaga and Aalborg)
 # GTs = [i for i in range(2,9)] # This is to make a sweep where scenarios with all the gateways in the range are considered
 
@@ -158,7 +158,7 @@ rotateFirst = False     # If True, the constellation starts rotated by 1 movemen
 # State pre-processing
 coordGran   = 20            # Granularity of the coordinates that will be the input of the DNN: (Lat/coordGran, Lon/coordGran)
 diff        = True          # If up, the state space gives no coordinates about the neighbor and destination positions but the difference with respect to the current positions
-diff_lastHop= True          # If up, this state is the same as diff, but it includes the last hop where the block was in order to avoid loops
+diff_lastHop= False          # If up, this state is the same as diff, but it includes the last hop where the block was in order to avoid loops
 reducedState= False         # if set to true the DNN will receive as input only the positional information, but not the queueing information
 notAvail    = 0             # this value is set in the state space when the satellite neighbour is not available
 
@@ -4186,6 +4186,14 @@ class DDQNAgent:
             return 0
         self.step   += 1
 
+        # In the online phase, sat observes the next state and reward feedback for prevSat,
+        # but the transition still belongs to prevSat's local agent and buffer (Q_i, D_i).
+        updateAgent = self
+        updateSat   = sat
+        if self.online and prevSat is not None and prevSat.DDQNA is not None:
+            updateAgent = prevSat.DDQNA
+            updateSat   = prevSat
+
         # 2. Check if the destination is the linked gateway. The reward is ArriveReward here and goes to the previous satellite. # ANCHOR plot delivered deep NN
         if sat.linkedGT and (block.destination.ID == sat.linkedGT.ID):    # Compare IDs
             if distanceRew == 4:
@@ -4194,19 +4202,19 @@ class DDQNAgent:
                 # distanceReward  = getDistanceRewardV4(prevSat, sat, block.destination, self.w2, self.w4)
                 queueReward     = getQueueReward   (block.queueTime[len(block.queueTime)-1], self.w1)
                 reward          = distanceReward + queueReward + ArriveReward
-                self.experienceReplay.store(block.oldState, block.oldAction, reward, newState, True)
+                updateAgent.experienceReplay.store(block.oldState, block.oldAction, reward, newState, True)
                 self.earth.rewards.append([reward, sat.env.now])
-                # self.experienceReplay.store(block.oldState, block.oldAction, ArriveReward, newState, True)
+                # updateAgent.experienceReplay.store(block.oldState, block.oldAction, ArriveReward, newState, True)
             elif distanceRew == 5:
                 distanceReward  = getDistanceRewardV5(prevSat, sat, self.w2)
                 reward          = distanceReward + ArriveReward
-                self.experienceReplay.store(block.oldState, block.oldAction, reward, newState, True)
+                updateAgent.experienceReplay.store(block.oldState, block.oldAction, reward, newState, True)
                 self.earth.rewards.append([reward, sat.env.now])
             else:
-                self.experienceReplay.store(block.oldState, block.oldAction, ArriveReward, newState, True)
+                updateAgent.experienceReplay.store(block.oldState, block.oldAction, ArriveReward, newState, True)
                 self.earth.rewards.append([ArriveReward, sat.env.now])
 
-            if TrainThis: self.train(sat, earth) # FIXME why here a train?? should not be here. Make a test without this when the model is stable
+            if TrainThis: updateAgent.train(updateSat, earth)
             if plotDeliver:
                 if int(block.ID[len(block.ID)-1]) == 0: # Draws 1/10 arrivals
                     os.makedirs(earth.outputPath + '/pictures/', exist_ok=True) # drawing delivered
@@ -4248,12 +4256,12 @@ class DDQNAgent:
             reward          = distanceReward + again + queueReward
 
         # 5. Store the experience of previous Node (Agent, satellite) if it was not a gateway  
-            self.experienceReplay.store(block.oldState, block.oldAction, reward, newState, False) # action index
+            updateAgent.experienceReplay.store(block.oldState, block.oldAction, reward, newState, False) # action index
             self.earth.rewards.append([reward, sat.env.now])
 
         # 6. Learning, train the Q-Network at every time we store experience
-            if TrainThis and self.step % nTrain == 0:
-                self.train(sat, earth)
+            if TrainThis and updateAgent.step % nTrain == 0:
+                updateAgent.train(updateSat, earth)
 
         else:
             # prev node was a gateway, no need to compute the reward
