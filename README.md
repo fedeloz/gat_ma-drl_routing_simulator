@@ -22,7 +22,7 @@ To set up the environment and install all required packages, follow these steps:
 1. **Clone the repository (Last 20 commits, since .git directory is big)**:
     ```sh
     git clone --depth 20 https://github.com/SatCom-TELMA/MA-DRL_Routing_Simulator.git
-    cd YourRepositoryName
+    cd MA-DRL_Routing_Simulator
     ```
 
 2. **Create a virtual environment** (optional but recommended):
